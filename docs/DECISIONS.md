@@ -144,3 +144,45 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   `insert_new_version` — a rejected review with no reason would have already changed the
   question's status with no `Review` row to show for it. The check was hoisted above all
   mutations so a validation failure is always a no-op against the DB.
+
+## Slice 6
+
+- **`pypdf` + `python-docx` over `unstructured`**: two small, format-specific libraries
+  are enough to extract raw text for chunking (`docs/TECH_ARCHITECTURE.md` SS6.1 only
+  calls for "accept an uploaded file, extract raw text" — no layout/table-aware parsing
+  is needed yet). `unstructured` pulls in a much larger dependency tree for capabilities
+  this slice doesn't use, which conflicts with "no premature abstraction... keep it
+  simple for a solo dev."
+
+- **Word-count chunk-size approximation over a real tokenizer**: `rag/chunking.py`
+  approximates `docs/TECH_ARCHITECTURE.md` SS6.2's "~500 tokens" default as 375 words
+  (~0.75 tokens/word) rather than adding `tiktoken` or a model-specific tokenizer. The
+  project has no OpenAI dependency to tie a tokenizer to, and an approximate chunk size
+  is good enough for a demo-scale corpus — precise token accounting matters for LLM/
+  embedding cost logging (which uses each provider's real usage numbers), not for
+  deciding where a chunk boundary falls.
+
+- **Original uploaded file discarded after text extraction, never written to disk**:
+  `services/ingestion.py` extracts text from the uploaded bytes in memory and never
+  persists the original PDF/DOC. `docs/TECH_ARCHITECTURE.md` SS6.1's ingestion flow never
+  mentions storing the source file, and skipping it avoids a new file-storage concern
+  (retention, disk growth, `.gitignore` surface) for a slice scoped to ingestion only.
+
+- **`EmbeddingProvider.embed()` hardcodes `input_type="search_document"`**: Cohere's v3
+  embed models require an `input_type` to distinguish documents being indexed from
+  queries being searched, but Slice 6 is ingestion-only — every call embeds source
+  chunks, never a query. The `EmbeddingProvider` Protocol itself stays exactly as
+  `docs/TECH_ARCHITECTURE.md` SS9.2 specifies it (`embed(texts, model)`, no extra
+  parameter); Slice 7 (RAG-grounded generation) is where query-side embedding is
+  introduced, and that's the right place to revisit whether `input_type` needs to
+  surface through the interface.
+
+- **Chunk overlap is best-effort, not a strict guarantee**: `rag/chunking.py` packs
+  whole paragraphs into a chunk and only carries a paragraph into the next chunk's
+  overlap if it independently fits within the overlap-word budget; a single paragraph
+  larger than that budget produces zero overlap at that boundary rather than splitting
+  it. A paragraph that exceeds the chunk-size budget on its own is hard-sliced into
+  fixed-stride word windows instead, which does guarantee overlap within it. This keeps
+  the algorithm simple and always terminating (no risk of an oversized chunk or an
+  infinite carry-over loop) at the cost of not hitting the ~15% overlap target exactly
+  at every boundary — acceptable given chunking is already a word-count approximation.

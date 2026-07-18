@@ -37,6 +37,14 @@ def get(document_id: str, db_path: Path | str = DEFAULT_DB_PATH) -> Document | N
     return _row_to_document(row) if row is not None else None
 
 
+def list_all(db_path: Path | str = DEFAULT_DB_PATH) -> list[Document]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM documents ORDER BY created_at DESC"
+        ).fetchall()
+    return [_row_to_document(row) for row in rows]
+
+
 def update_status(
     document_id: str,
     status: DocumentStatus,

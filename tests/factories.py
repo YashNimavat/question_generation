@@ -27,6 +27,7 @@ from core.models import (
     TrueFalsePayload,
     TrueFalseQuestion,
 )
+from embeddings.base import EmbeddingResult
 from llm.base import LLMResult, Message
 from metadata.models import MetadataRecord
 
@@ -229,6 +230,54 @@ def make_llm_result(**overrides: Any) -> LLMResult:
     }
     fields.update(overrides)
     return LLMResult(**fields)
+
+
+def make_embedding_result(**overrides: Any) -> EmbeddingResult:
+    fields: dict[str, Any] = {
+        "vectors": [[0.1, 0.2, 0.3]],
+        "model": "embed-english-v3.0",
+        "provider": "cohere",
+        "input_tokens": 50,
+        "latency_ms": 120.0,
+        "cost_usd": 0.000005,
+    }
+    fields.update(overrides)
+    return EmbeddingResult(**fields)
+
+
+class FakeEmbeddingProvider:
+    """Test double for embeddings.base.EmbeddingProvider. Returns queued results in
+    order, recording every call it received for assertions."""
+
+    def __init__(self, results: list[EmbeddingResult]) -> None:
+        self._results = list(results)
+        self.calls: list[dict[str, Any]] = []
+
+    def embed(self, texts: list[str], model: str) -> EmbeddingResult:
+        self.calls.append({"texts": texts, "model": model})
+        if not self._results:
+            raise AssertionError("FakeEmbeddingProvider.embed called more times than queued results")
+        return self._results.pop(0)
+
+
+class FakeVectorStore:
+    """Test double for rag.vector_store.VectorStore. Records add() calls and serves
+    query() from whatever has been added, ignoring `filter`."""
+
+    def __init__(self) -> None:
+        self.added: list[dict[str, Any]] = []
+
+    def add(self, ids: list[str], vectors: list[list[float]], metadata: list[dict[str, Any]]) -> None:
+        self.added.append({"ids": ids, "vectors": vectors, "metadata": metadata})
+
+    def query(self, vector: list[float], top_k: int, filter: dict[str, Any] | None = None):
+        from rag.vector_store import VectorMatch
+
+        matches = []
+        for batch in self.added:
+            for id_, meta in zip(batch["ids"], batch["metadata"]):
+                matches.append(VectorMatch(id=id_, score=0.0, metadata=meta))
+        return matches[:top_k]
 
 
 class FakeLLMProvider:

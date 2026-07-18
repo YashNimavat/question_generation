@@ -12,6 +12,9 @@ wheels/
 # Local SQLite database
 *.db
 
+# Local vector store
+chroma_data/
+
 # Secrets
 .env
 config/secrets.toml

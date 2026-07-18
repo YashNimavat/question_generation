@@ -9,6 +9,7 @@ EXAMPLE_SECRETS_PATH = Path(__file__).parent / "secrets.example.toml"
 
 class Secrets(BaseModel):
     groq_api_key: str
+    cohere_api_key: str | None = None
 
 
 def load_secrets(path: Path | str | None = None) -> Secrets:

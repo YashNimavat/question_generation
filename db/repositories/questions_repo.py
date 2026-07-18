@@ -15,8 +15,9 @@ def insert(question: Question, db_path: Path | str = DEFAULT_DB_PATH) -> Questio
             INSERT INTO questions (
                 id, version, type, status, stem, payload, difficulty, topic, tags,
                 source, document_id, parent_id, parent_version, generation_metadata_id,
+                duplicate_of_id, duplicate_of_version, duplicate_score,
                 created_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 question.id,
@@ -33,6 +34,9 @@ def insert(question: Question, db_path: Path | str = DEFAULT_DB_PATH) -> Questio
                 question.parent_id,
                 question.parent_version,
                 question.generation_metadata_id,
+                question.duplicate_of_id,
+                question.duplicate_of_version,
+                question.duplicate_score,
                 question.created_by,
                 question.created_at.isoformat(),
             ),
@@ -147,6 +151,9 @@ def _row_to_question(row: sqlite3.Row) -> Question:
         generation_metadata_id=row["generation_metadata_id"],
         parent_id=row["parent_id"],
         parent_version=row["parent_version"],
+        duplicate_of_id=row["duplicate_of_id"],
+        duplicate_of_version=row["duplicate_of_version"],
+        duplicate_score=row["duplicate_score"],
         created_at=row["created_at"],
         created_by=row["created_by"],
     )

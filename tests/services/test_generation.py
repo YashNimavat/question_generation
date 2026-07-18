@@ -14,7 +14,12 @@ from tests.factories import (
     make_document,
     make_embedding_result,
     make_llm_result,
+    make_mcq_question,
 )
+
+# cosine distance ~0.10 against [1.0, 0.0] -- between dedup_soft_threshold (0.15) and
+# dedup_hard_threshold (0.05), so it triggers a soft flag but not an auto-reject.
+NEAR_DUPLICATE_VECTOR = [0.9, 0.43589]
 
 VALID_MCQ_JSON = json.dumps(
     {
@@ -33,15 +38,23 @@ VALID_MCQ_JSON = json.dumps(
 
 def test_generate_mcq_happy_path_persists_question_and_metadata(db_path):
     provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
 
     question = generate_mcq(
-        topic="geography", difficulty="easy", provider=provider, model="llama-3.3-70b-versatile", db_path=db_path
+        topic="geography",
+        difficulty="easy",
+        provider=provider,
+        model="llama-3.3-70b-versatile",
+        embedding_provider=embedding_provider,
+        dedup_vector_store=FakeVectorStore(),
+        db_path=db_path,
     )
 
     assert question.status == QuestionStatus.GENERATED
     assert question.source == Source.TOPIC
     assert question.stem == "What is the capital of France?"
     assert question.payload.correct_option_id == "A"
+    assert question.duplicate_of_id is None
     assert len(provider.calls) == 1
 
     stored = questions_repo.get(question.id, question.version, db_path=db_path)
@@ -59,8 +72,16 @@ def test_generate_mcq_retries_once_on_malformed_json_then_succeeds(db_path):
             make_llm_result(text=VALID_MCQ_JSON),
         ]
     )
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
 
-    question = generate_mcq(topic="geography", difficulty="easy", provider=provider, db_path=db_path)
+    question = generate_mcq(
+        topic="geography",
+        difficulty="easy",
+        provider=provider,
+        embedding_provider=embedding_provider,
+        dedup_vector_store=FakeVectorStore(),
+        db_path=db_path,
+    )
 
     assert question.stem == "What is the capital of France?"
     assert len(provider.calls) == 2
@@ -113,7 +134,9 @@ def _vector_store_with_chunks(document_id: str) -> FakeVectorStore:
 def test_generate_mcq_grounded_in_document_persists_rag_usage_and_source(db_path):
     documents_repo.insert(make_document(id="doc1"), db_path=db_path)
     provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
-    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
+    embedding_provider = FakeEmbeddingProvider(
+        [make_embedding_result(vectors=[[1.0, 0.0]]), make_embedding_result(vectors=[[1.0, 0.0]])]
+    )
     vector_store = _vector_store_with_chunks("doc1")
 
     question = generate_mcq(
@@ -123,6 +146,7 @@ def test_generate_mcq_grounded_in_document_persists_rag_usage_and_source(db_path
         provider=provider,
         embedding_provider=embedding_provider,
         vector_store=vector_store,
+        dedup_vector_store=FakeVectorStore(),
         db_path=db_path,
     )
 
@@ -140,7 +164,8 @@ def test_generate_mcq_grounded_in_document_persists_rag_usage_and_source(db_path
     sent_prompt = provider.calls[0]["messages"][1].content
     assert "Paris has been the capital of France since the 10th century." in sent_prompt
 
-    # the query-side embedding call must be logged too (generation + embedding rows)
+    # the query-side retrieval embed and the dedup embed must both be logged
+    # (generation + embedding rows; embedding covers two distinct calls)
     with get_connection(db_path) as conn:
         operation_types = {
             row["operation_type"]
@@ -151,8 +176,16 @@ def test_generate_mcq_grounded_in_document_persists_rag_usage_and_source(db_path
 
 def test_generate_mcq_without_document_id_leaves_rag_usage_none(db_path):
     provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
 
-    question = generate_mcq(topic="geography", difficulty="easy", provider=provider, db_path=db_path)
+    question = generate_mcq(
+        topic="geography",
+        difficulty="easy",
+        provider=provider,
+        embedding_provider=embedding_provider,
+        dedup_vector_store=FakeVectorStore(),
+        db_path=db_path,
+    )
 
     metadata_record = metadata_repo.get(question.generation_metadata_id, db_path=db_path)
     assert metadata_record.rag_usage is None
@@ -182,7 +215,9 @@ def test_generate_mcq_grounded_raises_when_no_chunks_found(db_path):
 def test_generate_mcq_grounded_passes_top_k_through_to_retrieval(db_path):
     documents_repo.insert(make_document(id="doc1"), db_path=db_path)
     provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
-    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
+    embedding_provider = FakeEmbeddingProvider(
+        [make_embedding_result(vectors=[[1.0, 0.0]]), make_embedding_result(vectors=[[1.0, 0.0]])]
+    )
     vector_store = _vector_store_with_chunks("doc1")
 
     generate_mcq(
@@ -193,6 +228,7 @@ def test_generate_mcq_grounded_passes_top_k_through_to_retrieval(db_path):
         provider=provider,
         embedding_provider=embedding_provider,
         vector_store=vector_store,
+        dedup_vector_store=FakeVectorStore(),
         db_path=db_path,
     )
 
@@ -217,3 +253,86 @@ def test_generate_mcq_grounded_wraps_missing_embedding_key_as_generation_error(d
         )
 
     assert provider.calls == []
+
+
+def test_generate_mcq_persists_as_rejected_when_hard_duplicate_detected(db_path):
+    existing = make_mcq_question(id="existing1", version=1, topic="geography", status=QuestionStatus.APPROVED)
+    questions_repo.insert(existing, db_path=db_path)
+    dedup_store = FakeVectorStore()
+    dedup_store.add(
+        ids=["existing1_1"],
+        vectors=[[1.0, 0.0]],
+        metadata=[{"question_id": "existing1", "question_version": 1, "topic": "geography"}],
+    )
+    provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
+
+    question = generate_mcq(
+        topic="geography",
+        difficulty="easy",
+        provider=provider,
+        embedding_provider=embedding_provider,
+        dedup_vector_store=dedup_store,
+        db_path=db_path,
+    )
+
+    assert question.status == QuestionStatus.REJECTED
+    assert question.duplicate_of_id == "existing1"
+    assert question.duplicate_of_version == 1
+    assert question.duplicate_score == pytest.approx(0.0, abs=1e-6)
+
+    # a hard-rejected duplicate must not itself be indexed into the comparison pool
+    assert len(dedup_store.added) == 1
+
+
+def test_generate_mcq_persists_flagged_when_soft_duplicate_detected(db_path):
+    existing = make_mcq_question(
+        id="existing1", version=1, topic="geography", status=QuestionStatus.PENDING_REVIEW
+    )
+    questions_repo.insert(existing, db_path=db_path)
+    dedup_store = FakeVectorStore()
+    dedup_store.add(
+        ids=["existing1_1"],
+        vectors=[NEAR_DUPLICATE_VECTOR],
+        metadata=[{"question_id": "existing1", "question_version": 1, "topic": "geography"}],
+    )
+    provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])])
+
+    question = generate_mcq(
+        topic="geography",
+        difficulty="easy",
+        provider=provider,
+        embedding_provider=embedding_provider,
+        dedup_vector_store=dedup_store,
+        db_path=db_path,
+    )
+
+    assert question.status == QuestionStatus.GENERATED
+    assert question.duplicate_of_id == "existing1"
+    assert question.duplicate_of_version == 1
+    assert question.duplicate_score == pytest.approx(0.10, abs=1e-3)
+
+    # flagged (not hard-rejected) questions still join the comparison pool
+    assert len(dedup_store.added) == 2
+
+
+def test_generate_mcq_skips_dedup_gracefully_when_no_embedding_provider_configured(
+    db_path, tmp_path, monkeypatch
+):
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text('groq_api_key = "test-key"\n')
+    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
+
+    provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
+
+    question = generate_mcq(topic="geography", difficulty="easy", provider=provider, db_path=db_path)
+
+    assert question.status == QuestionStatus.GENERATED
+    assert question.duplicate_of_id is None
+
+    with get_connection(db_path) as conn:
+        operation_types = [
+            row["operation_type"] for row in conn.execute("SELECT operation_type FROM metadata_logs").fetchall()
+        ]
+    assert operation_types == ["generation"]

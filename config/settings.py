@@ -8,6 +8,8 @@ class Settings(BaseModel):
     default_embedding_provider: str = "cohere"
     default_embedding_model: str = "embed-english-v3.0"
     chroma_persist_dir: str = "chroma_data"
+    dedup_hard_threshold: float = 0.05
+    dedup_soft_threshold: float = 0.15
 
 
 settings = Settings()

@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from config.settings import settings
-from core.enums import OperationType, Source
+from core.enums import OperationType, QuestionStatus, Source
 from core.models import McqPayload, McqQuestion
 from db.connection import DEFAULT_DB_PATH
 from db.repositories import questions_repo
@@ -17,6 +17,7 @@ from metadata.logger import log_call
 from rag.grounding import build_grounded_context
 from rag.retrieval import get_relevant_chunks
 from rag.vector_store import VectorStore
+from services import dedup
 
 PROMPT_VERSION = "mcq_v1"
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "mcq_v1.txt"
@@ -39,6 +40,7 @@ def generate_mcq(
     embedding_provider: EmbeddingProvider | None = None,
     embedding_model: str | None = None,
     vector_store: VectorStore | None = None,
+    dedup_vector_store: VectorStore | None = None,
     created_by: str = "system",
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> McqQuestion:
@@ -120,20 +122,47 @@ def generate_mcq(
             ]
             continue
 
+        dedup_vector = dedup.embed_stem(
+            stem, embedding_provider=embedding_provider, embedding_model=embedding_model, db_path=db_path
+        )
+        dedup_result = (
+            dedup.check_similarity(
+                dedup_vector, topic=topic, vector_store=dedup_vector_store, db_path=db_path
+            )
+            if dedup_vector is not None
+            else dedup.DedupResult()
+        )
+
+        question_id = str(uuid.uuid4())
         question = McqQuestion(
-            id=str(uuid.uuid4()),
+            id=question_id,
             version=1,
+            status=QuestionStatus.REJECTED if dedup_result.is_duplicate else QuestionStatus.GENERATED,
             stem=stem,
             difficulty=difficulty,
             topic=topic,
             source=Source.DOCUMENT if document_id is not None else Source.TOPIC,
             document_id=document_id,
             generation_metadata_id=metadata_record.id,
+            duplicate_of_id=dedup_result.match.question_id if dedup_result.match else None,
+            duplicate_of_version=dedup_result.match.question_version if dedup_result.match else None,
+            duplicate_score=dedup_result.match.score if dedup_result.match else None,
             created_at=datetime.now(UTC),
             created_by=created_by,
             payload=payload,
         )
-        return questions_repo.insert(question, db_path=db_path)
+        saved = questions_repo.insert(question, db_path=db_path)
+
+        if dedup_vector is not None and not dedup_result.is_duplicate:
+            dedup.record_question_embedding(
+                question_id=saved.id,
+                question_version=saved.version,
+                topic=saved.topic,
+                vector=dedup_vector,
+                vector_store=dedup_vector_store,
+            )
+
+        return saved
 
     raise GenerationError(
         f"Failed to generate a valid MCQ for topic={topic!r} after "

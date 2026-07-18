@@ -35,7 +35,12 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   `questions_repo.insert_new_version` is the only path that writes a new `(id, version)`
   row for an existing lineage (Slice 5); there is no `UPDATE questions SET payload = ...`
   anywhere in the codebase.
-- Embedding-based deduplication over exact-match -> why:
+- Embedding-based deduplication over exact-match -> why: LLM-generated near-duplicates are
+  almost never character-for-character identical (reworded stems, swapped distractor order,
+  synonym substitution), so an exact-match check would miss the overwhelming majority of
+  real duplication. Comparing stem embeddings by cosine distance catches semantic
+  restatement, not just literal repetition, at the cost of needing a tunable similarity
+  threshold rather than a binary match (Slice 8).
 - Visitor-supplied API keys over owner-funded demo -> why:
 
 ## Slice 1
@@ -249,3 +254,63 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   the RAG toggle intentionally makes Cohere optional until it's actually used. Fixed the
   same way `services/ingestion.py` already wraps this exact `ValueError` into
   `IngestionError`, so both RAG entry points fail the same way.
+
+## Slice 8
+
+- **Dual-threshold duplicate policy, not a single cutoff**: a hard threshold
+  (`dedup_hard_threshold`, cosine distance <= 0.05) auto-rejects near-exact rewordings
+  the same way the auto-eval gate auto-rejects clearly-bad questions; a softer threshold
+  (`dedup_soft_threshold`, <= 0.15) instead flags the question (persisted normally,
+  `duplicate_of_id`/`duplicate_of_version`/`duplicate_score` set) so the SME sees
+  "similar to existing question X" during review and makes the judgment call, per
+  `SYSTEM_DESIGN.md`'s "either auto-discarded or surfaced to the SME... a policy choice"
+  framing. Both thresholds are `config/settings.py` fields, not constants buried in
+  `services/dedup.py`, so they're tunable in the same place as every other default
+  (`default_llm_model`, `chroma_persist_dir`, etc.) rather than requiring a code change.
+
+- **Comparison pool resolved live against SQLite, not by filtering Chroma metadata**:
+  the new `questions` Chroma collection is queried filtered only by `topic`; for each
+  candidate match, `services/dedup.py::check_similarity` looks up the question's
+  *current* status via `questions_repo.get()` and discards anything not
+  `approved`/`pending_review`. This avoids having to keep Chroma metadata in sync every
+  time a question's status changes elsewhere (evaluation, review) — status stays
+  single-sourced in SQLite, Chroma only ever stores the vector + a stable identity.
+
+- **Separate `questions` Chroma collection (cosine space) from the existing `chunks`
+  collection**: question-stem embeddings and document-chunk embeddings are different
+  vector spaces: comparing across them would be meaningless, and `chunks` isn't
+  configured for cosine distance (its distance metric was never load-bearing for RAG
+  retrieval ranking, only for dedup's threshold semantics). `ChromaVectorStore` gained
+  optional `collection_name`/`metadata` constructor params so both collections share one
+  implementation without changing default (RAG) behavior.
+
+- **One embedding call per generation, reused for both the similarity check and
+  indexing**: `check_similarity` and `record_question_embedding` both take an
+  already-computed vector rather than each embedding independently — `generate_mcq`
+  embeds the stem exactly once via `dedup.embed_stem`. Embedding twice per generation
+  would double dedup's Cohere cost/latency for no benefit.
+
+- **Missing/invalid embedding key skips dedup gracefully instead of failing
+  generation**: unlike the RAG-grounded path (which *requires* Cohere and wraps a
+  missing-key `ValueError` into a hard `GenerationError`), topic-only generation has
+  never needed an embedding key before this slice. Making dedup mandatory would mean a
+  BYO-key visitor with only a Groq key could no longer generate any question at all —
+  a much bigger regression than just not getting duplicate-checked. `dedup.embed_stem`
+  catches the missing-key `ValueError` and returns `None`; `generate_mcq` treats that as
+  "dedup unavailable for this call" and persists the question normally with no
+  duplicate fields set, rather than raising. The tradeoff: without a Cohere key, the
+  dataset can silently accumulate duplicates for that visitor's session — accepted
+  because generation working at all is a stronger requirement than generation being
+  duplicate-checked, and this only affects visitors who never configured embeddings in
+  the first place (anyone using RAG already needs the key, so this mainly affects
+  topic-only, no-RAG usage).
+
+- **Rejected duplicates are persisted, not silently dropped**: a hard-rejected
+  duplicate is still written to `questions` with `status=rejected` and
+  `duplicate_of_id`/`duplicate_score` set (same shape the auto-eval-fail path already
+  uses), matching `SYSTEM_DESIGN.md`'s "Storage: all versions, all decisions, retained"
+  principle — it's real signal for rejection-pattern analysis (how often does a given
+  topic/prompt version generate near-duplicates), not just noise to discard. It is,
+  however, *not* re-indexed into the `questions` Chroma collection itself (only
+  non-hard-rejected questions are), since a rejected duplicate shouldn't itself become a
+  future comparison target.

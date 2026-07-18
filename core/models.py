@@ -74,6 +74,9 @@ class QuestionBase(BaseModel):
     generation_metadata_id: str | None = None
     parent_id: str | None = None
     parent_version: int | None = None
+    duplicate_of_id: str | None = None
+    duplicate_of_version: int | None = None
+    duplicate_score: float | None = None
     created_at: datetime
     created_by: str
 

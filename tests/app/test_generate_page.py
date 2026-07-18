@@ -4,7 +4,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from db.connection import init_db
-from tests.factories import FakeLLMProvider, make_llm_result
+from tests.factories import FakeEmbeddingProvider, FakeLLMProvider, make_embedding_result, make_llm_result
 
 GENERATE_PAGE = Path(__file__).resolve().parents[2] / "app" / "pages" / "1_generate.py"
 
@@ -28,6 +28,10 @@ def test_generate_page_renders_generated_question(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "services.generation.get_llm_provider",
         lambda *a, **k: FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)]),
+    )
+    monkeypatch.setattr(
+        "services.dedup.get_embedding_provider",
+        lambda *a, **k: FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])]),
     )
 
     at = AppTest.from_file(str(GENERATE_PAGE))

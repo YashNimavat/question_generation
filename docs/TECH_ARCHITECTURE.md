@@ -62,7 +62,7 @@ Streamlit page "Generate"
        -> llm.LLMProvider.generate(prompt from prompts/mcq_v1.txt)
        -> metadata.log_call(...)               # tokens, cost, latency, prompt_version
        -> parse + validate LLM output into core.MCQQuestion
-       -> rag.dedup.check_similarity(question, embedding_provider)   [Slice 8]
+       -> services.dedup.check_similarity(vector, topic)   [Slice 8]
        -> db.questions_repo.insert(question, status="generated")
   <- returns Question to UI
 Streamlit page "Generate" (auto-triggers or user clicks "Evaluate")

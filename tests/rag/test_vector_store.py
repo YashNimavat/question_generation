@@ -45,3 +45,16 @@ def test_query_applies_metadata_filter(tmp_path):
     matches = store.query(vector=[1.0, 0.0], top_k=5, filter={"document_id": "doc2"})
 
     assert [m.id for m in matches] == ["b"]
+
+
+def test_custom_collection_name_is_isolated_from_default(tmp_path):
+    chunks_store = ChromaVectorStore(persist_dir=tmp_path)
+    questions_store = ChromaVectorStore(
+        persist_dir=tmp_path, collection_name="questions", metadata={"hnsw:space": "cosine"}
+    )
+
+    chunks_store.add(ids=["chunk1"], vectors=[[1.0, 0.0]], metadata=[{"text": "a chunk"}])
+    questions_store.add(ids=["q1_1"], vectors=[[1.0, 0.0]], metadata=[{"question_id": "q1"}])
+
+    assert [m.id for m in chunks_store.query(vector=[1.0, 0.0], top_k=5)] == ["chunk1"]
+    assert [m.id for m in questions_store.query(vector=[1.0, 0.0], top_k=5)] == ["q1_1"]

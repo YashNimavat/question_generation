@@ -21,6 +21,16 @@ def render_mcq_question(
         f"status: {question.status.value} · version: {question.version}"
     )
 
+    if question.duplicate_of_id is not None:
+        message = (
+            f"⚠ Similar to existing question {question.duplicate_of_id} "
+            f"v{question.duplicate_of_version} (similarity score {question.duplicate_score:.3f})"
+        )
+        if question.status.value == "rejected":
+            st.error(f"{message} — auto-rejected as a duplicate.")
+        else:
+            st.warning(message)
+
     for option in question.payload.options:
         if option.id == question.payload.correct_option_id:
             st.success(f"✓ {option.text}")

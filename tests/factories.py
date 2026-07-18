@@ -281,11 +281,25 @@ class FakeVectorStore:
 
         matches = []
         for batch in self.added:
-            for id_, meta in zip(batch["ids"], batch["metadata"]):
+            for id_, stored_vector, meta in zip(batch["ids"], batch["vectors"], batch["metadata"]):
                 if filter and any(meta.get(key) != value for key, value in filter.items()):
                     continue
-                matches.append(VectorMatch(id=id_, score=0.0, metadata=meta))
+                matches.append(
+                    VectorMatch(id=id_, score=_cosine_distance(vector, stored_vector), metadata=meta)
+                )
+        matches.sort(key=lambda m: m.score)
         return matches[:top_k]
+
+
+def _cosine_distance(a: list[float], b: list[float]) -> float:
+    """Mirrors chromadb's cosine distance (1 - cosine similarity) for a collection
+    created with hnsw:space=cosine, so fakes exercise dedup thresholds meaningfully."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 1.0
+    return 1.0 - dot / (norm_a * norm_b)
 
 
 class FakeLLMProvider:

@@ -314,3 +314,61 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   however, *not* re-indexed into the `questions` Chroma collection itself (only
   non-hard-rejected questions are), since a rejected duplicate shouldn't itself become a
   future comparison target.
+
+## Slice 9
+
+- **`prompt_version` added as a real `generate_mcq` axis, `mcq_v2.txt` written as a
+  genuinely different prompt (not a throwaway file)**: prior to this slice, the only
+  overridable generation axes were `model` and `document_id` (RAG on/off) —
+  `SYSTEM_DESIGN.md` §7.1 also calls for comparing prompt versions, so `mcq_v2.txt`
+  additionally requires the `explanation` field to state why the strongest distractor
+  is wrong (implementing `SYSTEM_DESIGN.md` §3.1's MCQ explanation guidance, which
+  `mcq_v1.txt` never did), giving prompt-version a real, testable difference. The
+  override only applies to topic-only generation; combining it with `document_id`
+  raises `GenerationError`, since the grounded pipeline has one prompt.
+
+- **Single-axis-per-experiment enforced in `services/experiment.py`, not left as UI
+  guidance**: `_validate_variants` raises if more than one of `{model, prompt_version,
+  document_id}` takes more than one distinct value across a variant set, per
+  `SYSTEM_DESIGN.md` §7.1 ("comparing model A/prompt-v1 against model B/prompt-v2
+  conflates two variables"). The Streamlit page also picks a single axis via a radio
+  button, so an experiment is single-variable by construction on both sides, not just
+  documented as a convention.
+
+- **`run_experiment` skips a failed sample and continues, rather than aborting the
+  whole comparison**: a `GenerationError`/`EvaluationError` on one sample out of
+  `sample_size` would otherwise throw away every other already-generated sample in the
+  run. The resulting lower `run_count` for that variant is itself surfaced in
+  `aggregate_results` as a visible signal (a variant that fails often *should* look
+  worse), not something to paper over.
+
+- **Diversity metric redesigned during planning to avoid conflating three different
+  populations**: the original plan reused the existing `duplicate_of_id`/
+  `duplicate_score` fields (set by Slice 8's dedup gate at generation time) as an
+  experiment "diversity" metric. That would have been wrong: `check_similarity` checks
+  against the persisted, topic-scoped Chroma `questions` collection, and
+  `generate_mcq` indexes each new question into that same collection immediately after
+  persisting it — so within one `run_experiment` loop, earlier samples leak into later
+  samples' dedup checks, and (since topic is held constant across variants in one
+  experiment by design) *a different variant's* samples would leak in too, making a
+  variant look artificially less diverse for reasons having nothing to do with its own
+  output. Fix: `services/dedup.py::batch_near_duplicate_rate` computes diversity
+  independently at `aggregate_results` time, via a fresh batch embedding call scoped
+  strictly to one variant's own stems from this experiment — no `vector_store`/topic
+  param at all, so it structurally cannot see the persisted pool or another variant's
+  batch. `duplicate_of_id` keeps doing its original Slice 8 job (keeping the stored
+  dataset clean) unchanged; the two mechanisms are now fully independent. Reuses
+  `settings.dedup_soft_threshold` for the "near-duplicate" cutoff rather than adding a
+  new tunable, since it's the same semantic meaning Slice 8 already established.
+
+- **Auto-eval-vs-SME "agreement" metric (`SYSTEM_DESIGN.md` §7.2) deferred**: this
+  synchronous, single-run `run_experiment` flow produces Questions and Evaluations but
+  no SME Review records, so there's nothing to measure agreement against yet. Left for
+  whichever slice next builds a review queue that specifically targets
+  experiment-generated questions.
+
+- **`VariantMetrics` is a local, non-persisted Pydantic model in
+  `services/experiment.py`** (same pattern as `services/dedup.py`'s `DedupResult`):
+  aggregation is a read-time computation over existing `Question`/`Evaluation`/
+  `MetadataRecord` rows via existing repository functions, per
+  `TECH_ARCHITECTURE.md` §3.5 — no new raw SQL, no new results table.

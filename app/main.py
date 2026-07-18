@@ -12,3 +12,4 @@ st.page_link("pages/2_questions.py", label="Browse stored questions", icon="📋
 st.page_link("pages/3_evaluate.py", label="Evaluate a question", icon="🧪")
 st.page_link("pages/4_review.py", label="SME review", icon="✅")
 st.page_link("pages/5_documents.py", label="Documents (RAG ingestion)", icon="📄")
+st.page_link("pages/6_experiments.py", label="Experiments (compare variants)", icon="🧬")

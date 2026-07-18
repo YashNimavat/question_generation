@@ -34,6 +34,24 @@ def get(experiment_id: str, db_path: Path | str = DEFAULT_DB_PATH) -> Experiment
     return _row_to_experiment(row) if row is not None else None
 
 
+def list_all(db_path: Path | str = DEFAULT_DB_PATH) -> list[Experiment]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM experiments ORDER BY created_at DESC"
+        ).fetchall()
+    return [_row_to_experiment(row) for row in rows]
+
+
+def update_status(
+    experiment_id: str, status: ExperimentStatus, db_path: Path | str = DEFAULT_DB_PATH
+) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE experiments SET status = ? WHERE id = ?",
+            (status.value, experiment_id),
+        )
+
+
 def insert_run(
     run: ExperimentRun, db_path: Path | str = DEFAULT_DB_PATH
 ) -> ExperimentRun:

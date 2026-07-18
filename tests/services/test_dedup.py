@@ -119,6 +119,72 @@ def test_embed_stem_returns_none_when_no_embedding_provider_configured(db_path, 
     assert count == 0
 
 
+def test_batch_near_duplicate_rate_returns_none_without_embedding_provider(db_path, tmp_path, monkeypatch):
+    secrets_path = tmp_path / "secrets.toml"
+    secrets_path.write_text('groq_api_key = "test-key"\n')
+    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
+
+    rate = dedup.batch_near_duplicate_rate(["stem one", "stem two"], db_path=db_path)
+
+    assert rate is None
+    with get_connection(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM metadata_logs").fetchone()[0]
+    assert count == 0
+
+
+def test_batch_near_duplicate_rate_returns_zero_for_a_single_stem(db_path):
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[QUERY_VECTOR])])
+
+    rate = dedup.batch_near_duplicate_rate(
+        ["only stem"], embedding_provider=embedding_provider, db_path=db_path
+    )
+
+    assert rate == 0.0
+    assert embedding_provider.calls == []  # single-stem batches never need an embed call
+
+
+def test_batch_near_duplicate_rate_scoped_to_the_batch_only(db_path):
+    # stem 0 and stem 1 are near-duplicates of each other (distance ~0.10, under the
+    # default 0.15 soft threshold); stem 2 is unrelated to both.
+    embedding_provider = FakeEmbeddingProvider(
+        [make_embedding_result(vectors=[QUERY_VECTOR, NEAR_VECTOR, FAR_VECTOR])]
+    )
+
+    rate = dedup.batch_near_duplicate_rate(
+        ["stem a", "stem a near-duplicate", "stem b unrelated"],
+        embedding_provider=embedding_provider,
+        db_path=db_path,
+    )
+
+    assert rate == pytest.approx(2 / 3)
+    assert embedding_provider.calls == [
+        {
+            "texts": ["stem a", "stem a near-duplicate", "stem b unrelated"],
+            "model": "embed-english-v3.0",
+            "input_type": "search_document",
+        }
+    ]
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT * FROM metadata_logs").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["operation_type"] == "embedding"
+
+
+def test_batch_near_duplicate_rate_ignores_persisted_pool(db_path):
+    # An identical-vector "existing" question is in the approved pool, but
+    # batch_near_duplicate_rate has no vector_store/topic param at all -- it can only
+    # ever compare within the batch passed to it, never against history.
+    existing = make_mcq_question(id="q1", version=1, topic="geography", status=QuestionStatus.APPROVED)
+    questions_repo.insert(existing, db_path=db_path)
+    embedding_provider = FakeEmbeddingProvider([make_embedding_result(vectors=[QUERY_VECTOR, FAR_VECTOR])])
+
+    rate = dedup.batch_near_duplicate_rate(
+        ["new stem a", "new stem b"], embedding_provider=embedding_provider, db_path=db_path
+    )
+
+    assert rate == 0.0
+
+
 def test_record_question_embedding_adds_to_vector_store():
     store = FakeVectorStore()
 

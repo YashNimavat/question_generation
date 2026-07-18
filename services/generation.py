@@ -25,6 +25,14 @@ GROUNDED_PROMPT_VERSION = "mcq_grounded_v1"
 GROUNDED_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "mcq_grounded_v1.txt"
 MAX_ATTEMPTS = 2
 
+# Topic-only prompt variants, keyed by prompt_version -- an experimentation axis
+# (Slice 9). The grounded (RAG) pipeline has only one prompt so far and doesn't
+# accept a prompt_version override.
+PROMPT_VERSIONS: dict[str, Path] = {
+    PROMPT_VERSION: PROMPT_PATH,
+    "mcq_v2": Path(__file__).parent.parent / "prompts" / "mcq_v2.txt",
+}
+
 
 class GenerationError(Exception):
     pass
@@ -34,6 +42,7 @@ def generate_mcq(
     topic: str,
     difficulty: str,
     document_id: str | None = None,
+    prompt_version: str | None = None,
     provider: LLMProvider | None = None,
     model: str | None = None,
     top_k: int = 5,
@@ -49,6 +58,11 @@ def generate_mcq(
 
     rag_usage: dict | None = None
     if document_id is not None:
+        if prompt_version is not None:
+            raise GenerationError(
+                "prompt_version override is not supported for RAG-grounded generation "
+                "(document_id is set) -- the grounded pipeline has only one prompt."
+            )
         try:
             chunks = get_relevant_chunks(
                 query=topic,
@@ -76,8 +90,14 @@ def generate_mcq(
         )
         rag_usage = {"document_id": document_id, "chunk_ids": [c.chunk_id for c in chunks]}
     else:
-        prompt_path = PROMPT_PATH
-        prompt_version = PROMPT_VERSION
+        prompt_version = prompt_version or PROMPT_VERSION
+        try:
+            prompt_path = PROMPT_VERSIONS[prompt_version]
+        except KeyError:
+            raise GenerationError(
+                f"Unknown prompt_version={prompt_version!r}; must be one of "
+                f"{sorted(PROMPT_VERSIONS)}"
+            ) from None
         user_content = (
             f"Topic: {topic}\nDifficulty: {difficulty}\n"
             "Generate one multiple-choice question now."

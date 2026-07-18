@@ -102,6 +102,61 @@ def check_similarity(
     return DedupResult()
 
 
+def batch_near_duplicate_rate(
+    stems: list[str],
+    threshold: float | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    embedding_model: str | None = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> float | None:
+    """Diversity metric for a single batch of stems (e.g. one experiment variant's
+    generated questions), scoped strictly to that batch -- deliberately independent
+    of check_similarity's persisted approved/pending pool and of any other batch, so
+    it can't be contaminated by history or by a different experiment variant that
+    happens to share a topic (see docs/DECISIONS.md, Slice 9). Returns None if no
+    embedding provider is configured, same graceful-degradation policy as embed_stem."""
+    if len(stems) < 2:
+        return 0.0
+
+    threshold = threshold if threshold is not None else settings.dedup_soft_threshold
+    try:
+        embedding_provider = embedding_provider or get_embedding_provider()
+    except ValueError:
+        return None
+    embedding_model = embedding_model or settings.default_embedding_model
+
+    result = embedding_provider.embed(stems, model=embedding_model)
+    log_call(
+        operation_type=OperationType.EMBEDDING,
+        provider=result.provider,
+        model=result.model,
+        input_tokens=result.input_tokens,
+        output_tokens=0,
+        latency_ms=result.latency_ms,
+        cost_usd=result.cost_usd,
+        db_path=db_path,
+    )
+
+    vectors = result.vectors
+    has_near_duplicate = [False] * len(vectors)
+    for i in range(len(vectors)):
+        for j in range(i + 1, len(vectors)):
+            if _cosine_distance(vectors[i], vectors[j]) <= threshold:
+                has_near_duplicate[i] = True
+                has_near_duplicate[j] = True
+
+    return sum(has_near_duplicate) / len(vectors)
+
+
+def _cosine_distance(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 1.0
+    return 1.0 - dot / (norm_a * norm_b)
+
+
 def record_question_embedding(
     question_id: str,
     question_version: int,

@@ -496,7 +496,7 @@ rest of the call's metadata in one write.
 3. Apply the rubric's threshold rules (defined per rubric, e.g. "Correctness < 3 ->
    fail regardless of other dimensions") to compute `overall_verdict`.
 4. Persist the `Evaluation` row (Section 4.2) and update `questions.status`:
-   `auto_evaluated` if verdict is `pass`/`needs_review`, `rejected` if `fail`.
+   `pending_review` if verdict is `pass`/`needs_review`, `rejected` if `fail`.
 
 ### 7.3 Storing results
 

@@ -14,7 +14,7 @@ def _persisted_question(db_path):
     return questions_repo.insert(make_mcq_question(), db_path=db_path)
 
 
-def test_evaluate_happy_path_persists_evaluation_and_marks_auto_evaluated(db_path):
+def test_evaluate_happy_path_persists_evaluation_and_marks_pending_review(db_path):
     question = _persisted_question(db_path)
     provider = FakeLLMProvider([make_llm_result(text=PASSING_JSON)])
 
@@ -34,7 +34,7 @@ def test_evaluate_happy_path_persists_evaluation_and_marks_auto_evaluated(db_pat
     assert stored == [evaluation]
 
     updated_question = questions_repo.get(question.id, question.version, db_path=db_path)
-    assert updated_question.status == QuestionStatus.AUTO_EVALUATED
+    assert updated_question.status == QuestionStatus.PENDING_REVIEW
 
 
 def test_evaluate_fail_verdict_marks_question_rejected(db_path):

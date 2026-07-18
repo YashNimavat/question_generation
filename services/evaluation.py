@@ -98,7 +98,7 @@ def evaluate(
         new_status = (
             QuestionStatus.REJECTED
             if verdict == OverallVerdict.FAIL
-            else QuestionStatus.AUTO_EVALUATED
+            else QuestionStatus.PENDING_REVIEW
         )
         questions_repo.update_status(question_id, question_version, new_status, db_path=db_path)
         return saved

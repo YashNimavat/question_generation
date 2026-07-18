@@ -28,6 +28,13 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
 - Streamlit-only MVP over Streamlit+FastAPI -> why:
 - Type-discriminated Question model over separate tables per type -> why:
 - Versioning edited questions (new version linked to original) over in-place edits -> why:
+  an SME edit is itself signal for the improvement loop (`SYSTEM_DESIGN.md` §1.7, §2) — the
+  pre-edit version shows exactly what the LLM got wrong. Overwriting it in place would
+  destroy that diff, break the audit trail of who changed what and when, and leave
+  `Evaluation`/`Review` rows pointing at a version that silently changed underneath them.
+  `questions_repo.insert_new_version` is the only path that writes a new `(id, version)`
+  row for an existing lineage (Slice 5); there is no `UPDATE questions SET payload = ...`
+  anywhere in the codebase.
 - Embedding-based deduplication over exact-match -> why:
 - Visitor-supplied API keys over owner-funded demo -> why:
 
@@ -107,3 +114,33 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   box) rather than persisting it anywhere — `SYSTEM_DESIGN.md` doesn't model reference
   answers as their own entity yet, only as a per-Evaluation `reference_answer_used` flag,
   so there's nothing to store beyond that flag at this slice.
+
+## Slice 5
+
+- **`evaluate()` now sets `pending_review` instead of `auto_evaluated` on a pass/
+  needs_review verdict**: this was a pre-existing gap against `SYSTEM_DESIGN.md` §1.6's
+  lifecycle (`auto_evaluated -> pending_review -> approved/rejected/edited`) — nothing
+  previously wrote `pending_review`, so the review queue would have had no well-defined
+  status to query. Fixing the one-line branch in `services/evaluation.py` (Slice 4 code)
+  was in scope for Slice 5 because the review queue's correctness depends on it directly.
+
+- **`reviewer_id` as a free-text session input, no `reviewers` table**: matches
+  `docs/TECH_ARCHITECTURE.md` §8.4 — Phase 1 has no auth system and a single/small SME
+  pool, so a plain text box (same pattern as the BYO-API-key input on other pages) is
+  enough. `reviewer_id` is already a foreign-key-shaped column, so a real `reviewers`
+  table is a strictly additive change later, not a migration.
+
+- **Edit form built for `McqPayload` only**: `generate_mcq` is still the only generator
+  implemented (`services/generation.py`) — True/False and Fill-in-Blank payload models
+  exist but nothing produces them yet, so an editor for those types would have no
+  question to ever act on. `services/review.py`'s `submit_review` itself is fully
+  type-agnostic (`type(original.payload)(**edited_payload)`); only the Streamlit inline
+  editor is MCQ-specific, and adding a T/F or Fill-in-Blank editor later is an additive
+  UI change, not a service-layer one.
+
+- **`submit_review` validates before mutating**: the reason-category-required-unless-
+  approve check runs before any repository write. Early drafts constructed the `Review`
+  Pydantic model (which owns that validation) only after calling `update_status` /
+  `insert_new_version` — a rejected review with no reason would have already changed the
+  question's status with no `Review` row to show for it. The check was hoisted above all
+  mutations so a validation failure is always a no-op against the DB.

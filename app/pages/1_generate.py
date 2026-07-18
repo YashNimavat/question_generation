@@ -8,14 +8,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import streamlit as st
 
-from app.components.question_card import render_mcq_question
+from app.components.question_card import render_question
 from core.enums import DocumentStatus
 from db.repositories import documents_repo, metadata_repo
-from services.generation import GenerationError, generate_mcq
+from services.generation import GenerationError, generate_fill_blank, generate_mcq, generate_true_false
 
 st.title("Generate a Question")
 
+_GENERATORS = {
+    "MCQ": generate_mcq,
+    "True/False": generate_true_false,
+    "Fill-in-Blank": generate_fill_blank,
+}
+
 topic = st.text_input("Topic", key="generate_topic")
+question_type_label = st.selectbox(
+    "Question type", list(_GENERATORS.keys()), key="generate_question_type"
+)
 difficulty = st.selectbox(
     "Difficulty", ["easy", "medium", "hard"], key="generate_difficulty"
 )
@@ -44,7 +53,8 @@ if st.button("Generate", key="generate_button"):
         st.warning("Select a document to ground generation in, or turn off the RAG toggle.")
     else:
         try:
-            question = generate_mcq(topic=topic, difficulty=difficulty, document_id=document_id)
+            generate = _GENERATORS[question_type_label]
+            question = generate(topic=topic, difficulty=difficulty, document_id=document_id)
             st.session_state["last_generated_question"] = question
         except GenerationError as exc:
             st.session_state.pop("last_generated_question", None)
@@ -61,4 +71,4 @@ if question is not None:
     metadata = None
     if question.generation_metadata_id is not None:
         metadata = metadata_repo.get(question.generation_metadata_id)
-    render_mcq_question(question, metadata=metadata)
+    render_question(question, metadata=metadata)

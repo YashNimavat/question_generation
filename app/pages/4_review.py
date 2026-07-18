@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import streamlit as st
 
 from app.components.evaluation_card import render_evaluation
-from app.components.question_card import render_mcq_question
-from core.enums import QuestionStatus, ReasonCategory, ReviewDecision, Severity
+from app.components.question_card import render_question
+from core.enums import QuestionStatus, QuestionType, ReasonCategory, ReviewDecision, Severity
 from core.models import ReviewFeedback
 from db.repositories import evaluations_repo, questions_repo, reviews_repo
 from services.review import ReviewError, submit_review
@@ -28,7 +28,7 @@ labels = {f"{q.stem[:60]} (v{q.version}, {q.topic})": q for q in queue}
 selected_label = st.selectbox("Pending review", list(labels.keys()), key="review_question_select")
 question = labels[selected_label]
 
-render_mcq_question(question)
+render_question(question)
 
 evaluations = evaluations_repo.list_for_question(question.id)
 if evaluations:
@@ -56,29 +56,68 @@ if decision != ReviewDecision.APPROVE:
 
 edited_payload = None
 if decision == ReviewDecision.EDIT:
-    st.subheader("Edit MCQ")
-    option_texts = {}
-    for option in question.payload.options:
-        option_texts[option.id] = st.text_input(
-            f"Option {option.id}", value=option.text, key=f"review_edit_option_{option.id}"
+    if question.type == QuestionType.MCQ:
+        st.subheader("Edit MCQ")
+        option_texts = {}
+        for option in question.payload.options:
+            option_texts[option.id] = st.text_input(
+                f"Option {option.id}", value=option.text, key=f"review_edit_option_{option.id}"
+            )
+        correct_option_id = st.radio(
+            "Correct option",
+            [o.id for o in question.payload.options],
+            index=[o.id for o in question.payload.options].index(question.payload.correct_option_id),
+            key="review_edit_correct_option",
         )
-    correct_option_id = st.radio(
-        "Correct option",
-        [o.id for o in question.payload.options],
-        index=[o.id for o in question.payload.options].index(question.payload.correct_option_id),
-        key="review_edit_correct_option",
-    )
-    explanation = st.text_area(
-        "Explanation", value=question.payload.explanation, key="review_edit_explanation"
-    )
-    edited_payload = {
-        "options": [
-            {"id": opt_id, "text": text, "is_correct": opt_id == correct_option_id}
-            for opt_id, text in option_texts.items()
-        ],
-        "correct_option_id": correct_option_id,
-        "explanation": explanation,
-    }
+        explanation = st.text_area(
+            "Explanation", value=question.payload.explanation, key="review_edit_explanation"
+        )
+        edited_payload = {
+            "options": [
+                {"id": opt_id, "text": text, "is_correct": opt_id == correct_option_id}
+                for opt_id, text in option_texts.items()
+            ],
+            "correct_option_id": correct_option_id,
+            "explanation": explanation,
+        }
+    elif question.type == QuestionType.TRUE_FALSE:
+        st.subheader("Edit True/False")
+        correct_answer = st.radio(
+            "Correct answer",
+            [True, False],
+            index=0 if question.payload.correct_answer else 1,
+            format_func=lambda v: "True" if v else "False",
+            key="review_edit_correct_answer",
+        )
+        explanation = st.text_area(
+            "Explanation", value=question.payload.explanation, key="review_edit_tf_explanation"
+        )
+        edited_payload = {
+            "correct_answer": correct_answer,
+            "explanation": explanation,
+        }
+    elif question.type == QuestionType.FILL_BLANK:
+        st.subheader("Edit Fill-in-Blank")
+        accepted_answers_input = st.text_input(
+            "Accepted answers (comma-separated)",
+            value=", ".join(question.payload.accepted_answers),
+            key="review_edit_accepted_answers",
+        )
+        blank_marker = st.text_input(
+            "Blank marker", value=question.payload.blank_marker, key="review_edit_blank_marker"
+        )
+        fill_blank_explanation = st.text_area(
+            "Explanation", value=question.payload.explanation, key="review_edit_fill_blank_explanation"
+        )
+        case_sensitive = st.checkbox(
+            "Case sensitive", value=question.payload.case_sensitive, key="review_edit_case_sensitive"
+        )
+        edited_payload = {
+            "accepted_answers": [a.strip() for a in accepted_answers_input.split(",") if a.strip()],
+            "blank_marker": blank_marker,
+            "explanation": fill_blank_explanation,
+            "case_sensitive": case_sensitive,
+        }
 
 if st.button("Submit review", key="review_submit_button"):
     if not reviewer_id.strip():

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import streamlit as st
 
-from app.components.question_card import render_mcq_question
+from app.components.question_card import render_question
 from core.enums import QuestionStatus, QuestionType
 from db.repositories import questions_repo
 
@@ -21,7 +21,6 @@ status_filter = st.selectbox(
 type_filter = st.selectbox(
     "Type", ["(all)"] + [t.value for t in QuestionType], key="questions_type_filter"
 )
-st.caption("Only MCQ questions can be generated so far.")
 
 status = None if status_filter == "(all)" else QuestionStatus(status_filter)
 question_type = None if type_filter == "(all)" else QuestionType(type_filter)
@@ -35,4 +34,4 @@ if not questions:
 else:
     for question in questions:
         with st.container(border=True):
-            render_mcq_question(question)
+            render_question(question)

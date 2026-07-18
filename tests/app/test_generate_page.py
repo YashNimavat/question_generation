@@ -21,6 +21,23 @@ VALID_MCQ_JSON = json.dumps(
     }
 )
 
+VALID_TRUE_FALSE_JSON = json.dumps(
+    {
+        "stem": "Water boils at 100 degrees Celsius at sea level.",
+        "correct_answer": True,
+        "explanation": "At standard atmospheric pressure, water's boiling point is 100C.",
+    }
+)
+
+VALID_FILL_BLANK_JSON = json.dumps(
+    {
+        "stem": "The ___ is the powerhouse of the cell.",
+        "accepted_answers": ["mitochondria", "the mitochondria"],
+        "explanation": "Mitochondria generate most of the cell's ATP supply.",
+        "case_sensitive": False,
+    }
+)
+
 
 def test_generate_page_renders_generated_question(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -73,3 +90,49 @@ def test_generate_page_shows_error_on_generation_failure(tmp_path, monkeypatch):
 
     assert not at.exception
     assert len(at.error) == 1
+
+
+def test_generate_page_generates_true_false_question(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    init_db("question_intelligence.db")
+    monkeypatch.setattr(
+        "services.generation.get_llm_provider",
+        lambda *a, **k: FakeLLMProvider([make_llm_result(text=VALID_TRUE_FALSE_JSON)]),
+    )
+    monkeypatch.setattr(
+        "services.dedup.get_embedding_provider",
+        lambda *a, **k: FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])]),
+    )
+
+    at = AppTest.from_file(str(GENERATE_PAGE))
+    at.run()
+    at.text_input(key="generate_topic").input("science").run()
+    at.selectbox(key="generate_question_type").select("True/False").run()
+    at.button(key="generate_button").click().run()
+
+    assert not at.exception
+    assert any("Water boils at 100 degrees Celsius" in s.value for s in at.subheader)
+    assert any("True" in s.value for s in at.success)
+
+
+def test_generate_page_generates_fill_blank_question(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    init_db("question_intelligence.db")
+    monkeypatch.setattr(
+        "services.generation.get_llm_provider",
+        lambda *a, **k: FakeLLMProvider([make_llm_result(text=VALID_FILL_BLANK_JSON)]),
+    )
+    monkeypatch.setattr(
+        "services.dedup.get_embedding_provider",
+        lambda *a, **k: FakeEmbeddingProvider([make_embedding_result(vectors=[[1.0, 0.0]])]),
+    )
+
+    at = AppTest.from_file(str(GENERATE_PAGE))
+    at.run()
+    at.text_input(key="generate_topic").input("biology").run()
+    at.selectbox(key="generate_question_type").select("Fill-in-Blank").run()
+    at.button(key="generate_button").click().run()
+
+    assert not at.exception
+    assert any("powerhouse of the cell" in s.value for s in at.subheader)
+    assert any("mitochondria" in s.value for s in at.markdown)

@@ -92,6 +92,7 @@ def make_fill_blank_question(**overrides: Any) -> FillBlankQuestion:
     payload = overrides.pop("payload", None) or FillBlankPayload(
         accepted_answers=["mitochondria", "the mitochondria"],
         blank_marker="___",
+        explanation="Mitochondria generate most of the cell's ATP supply.",
         case_sensitive=False,
     )
     fields: dict[str, Any] = {

@@ -33,16 +33,50 @@ MCQ_RUBRIC_V1 = Rubric(
     ],
 )
 
+TRUE_FALSE_RUBRIC_V1 = Rubric(
+    id="rubric_true_false",
+    version="v1",
+    question_type=QuestionType.TRUE_FALSE,
+    dimensions=[
+        RubricDimension(key="correctness", name="Correctness"),
+        RubricDimension(key="clarity", name="Clarity"),
+        RubricDimension(key="difficulty_calibration", name="Difficulty Calibration"),
+        RubricDimension(key="explanation_quality", name="Explanation Quality"),
+    ],
+)
+
+FILL_BLANK_RUBRIC_V1 = Rubric(
+    id="rubric_fill_blank",
+    version="v1",
+    question_type=QuestionType.FILL_BLANK,
+    dimensions=[
+        RubricDimension(key="correctness", name="Correctness"),
+        RubricDimension(key="clarity", name="Clarity"),
+        RubricDimension(key="difficulty_calibration", name="Difficulty Calibration"),
+        RubricDimension(key="explanation_quality", name="Explanation Quality"),
+        RubricDimension(key="answer_key_completeness", name="Answer Key Completeness"),
+    ],
+)
+
 _RUBRICS: dict[tuple[QuestionType, str, str], Rubric] = {
     (QuestionType.MCQ, "rubric_mcq", "v1"): MCQ_RUBRIC_V1,
+    (QuestionType.TRUE_FALSE, "rubric_true_false", "v1"): TRUE_FALSE_RUBRIC_V1,
+    (QuestionType.FILL_BLANK, "rubric_fill_blank", "v1"): FILL_BLANK_RUBRIC_V1,
+}
+
+_DEFAULT_RUBRIC_IDS: dict[QuestionType, str] = {
+    QuestionType.MCQ: "rubric_mcq",
+    QuestionType.TRUE_FALSE: "rubric_true_false",
+    QuestionType.FILL_BLANK: "rubric_fill_blank",
 }
 
 
 def get_rubric(
     question_type: QuestionType,
-    rubric_id: str = "rubric_mcq",
+    rubric_id: str | None = None,
     rubric_version: str = "v1",
 ) -> Rubric:
+    rubric_id = rubric_id or _DEFAULT_RUBRIC_IDS.get(question_type, f"rubric_{question_type.value}")
     try:
         return _RUBRICS[(question_type, rubric_id, rubric_version)]
     except KeyError:

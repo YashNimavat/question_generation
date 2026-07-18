@@ -9,23 +9,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import streamlit as st
 
 from app.components.evaluation_card import render_evaluation
-from app.components.question_card import render_mcq_question
-from core.enums import QuestionType
+from app.components.question_card import render_question
 from db.repositories import evaluations_repo, metadata_repo, questions_repo
 from services.evaluation import EvaluationError, evaluate
 
 st.title("Evaluate a Question")
 
-questions = questions_repo.list_questions(type=QuestionType.MCQ)
+questions = questions_repo.list_questions()
 if not questions:
-    st.info("No MCQ questions yet. Generate one first.")
+    st.info("No questions yet. Generate one first.")
     st.stop()
 
-labels = {f"{q.stem[:60]} (v{q.version}, {q.status.value})": q for q in questions}
+labels = {
+    f"{q.stem[:60]} ({q.type.value}, v{q.version}, {q.status.value})": q for q in questions
+}
 selected_label = st.selectbox("Question", list(labels.keys()), key="evaluate_question")
 question = labels[selected_label]
 
-render_mcq_question(question)
+render_question(question)
 
 reference_answer = st.text_input("Reference answer (optional)", key="evaluate_reference_answer")
 

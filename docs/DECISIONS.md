@@ -372,3 +372,76 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   aggregation is a read-time computation over existing `Question`/`Evaluation`/
   `MetadataRecord` rows via existing repository functions, per
   `TECH_ARCHITECTURE.md` §3.5 — no new raw SQL, no new results table.
+
+## Slice 11
+
+- **`core/rubric.py::get_rubric`'s `rubric_id` default was a latent bug, fixed as part
+  of this slice rather than deferred**: the default was hardcoded to `"rubric_mcq"`
+  regardless of `question_type`, and `services/evaluation.py::evaluate` always called
+  `get_rubric(question.type)` with no explicit `rubric_id`. Before this slice the bug
+  was invisible (only MCQ questions existed to evaluate), but evaluating a new type
+  without the fix would either silently score it against the MCQ rubric's dimension
+  keys (a `KeyError`/parse failure the first time the judge correctly returned
+  type-appropriate keys) or a `ValueError` — either way, broken, not just incomplete.
+  Fix: `rubric_id` defaults to `None` and resolves to `f"rubric_{question_type.value}"`
+  via a small per-type lookup table.
+
+- **`FillBlankPayload` (built in Slice 1) was missing an `explanation` field —
+  added within this slice, not deferred.** It originally had only
+  `accepted_answers`, `blank_marker`, `case_sensitive`. This wasn't discovered until
+  writing the Fill-in-Blank judge prompt and hitting an `AttributeError` in a test.
+  `SYSTEM_DESIGN.md` §4.1 lists `explanation_quality` as a baseline dimension
+  "applicable to (almost) every type," and the model gap meant Fill-in-Blank
+  questions had no explanatory text at all — a real, user-visible asymmetry against
+  MCQ and True/False, not just a missing rubric dimension. The first pass shipped
+  with `FILL_BLANK_RUBRIC_V1` omitting `explanation_quality` and treated adding the
+  field as out-of-scope "touching a locked model." On review, that was the wrong
+  call: the field is a small, additive addition (a new required `str` field, no
+  migration of existing data since nothing had been generated with the old shape
+  yet), and `SYSTEM_DESIGN.md` already specifies it should exist — so it was fixed
+  properly instead of documented as a known gap. `FillBlankPayload.explanation: str`
+  is now required; `fill_blank_v1.txt`/`fill_blank_grounded_v1.txt` ask the generator
+  for it; `_parse_fill_blank_response` reads it; `FILL_BLANK_RUBRIC_V1` and
+  `judge_fill_blank_v1.txt` include `explanation_quality` again (5 dimensions,
+  matching MCQ's dimension count); `_build_fill_blank_judge_body` shows it to the
+  judge; `question_card.py::_render_fill_blank_payload` renders it in an
+  "Explanation" expander (matching MCQ/True-False); and the SME review page's
+  Fill-in-Blank edit form gained an `Explanation` text area alongside accepted
+  answers, blank marker, and case sensitivity.
+
+- **`services/generation.py` refactored into a shared `_generate(...)` pipeline**
+  (prompt resolution, LLM call + retry, dedup check, persist, metadata) with
+  `generate_mcq`/`generate_true_false`/`generate_fill_blank` as thin per-type
+  wrappers, per `TECH_ARCHITECTURE.md` §3.1's stated design. `generate_mcq`'s public
+  signature and behavior are unchanged — verified by the pre-existing MCQ test suite
+  passing against the refactor with no test changes required. The module-level
+  `PROMPT_VERSIONS` name (MCQ's multi-version dict) was kept as-is rather than
+  renamed, since `app/pages/6_experiments.py` imports it directly.
+
+- **True/False and Fill-in-Blank get a single prompt version each** (`true_false_v1`,
+  `fill_blank_v1`, plus one grounded variant each) — unlike MCQ's `PROMPT_VERSIONS`
+  dict with two entries, these types don't expose a `prompt_version` override
+  parameter at all. No experiment has asked to compare prompt versions for these types
+  yet; adding the override is a strictly additive change later (mirrors the MCQ
+  `mcq_v1`/`mcq_v2` precedent from Slice 9) rather than something to scaffold now
+  per `CLAUDE.md`'s "no premature abstraction."
+
+- **`services/evaluation.py::_build_judge_prompt` dispatches on `question.type` via a
+  small per-type builder-function table**, and judge system prompts are now looked up
+  per type (`JUDGE_PROMPTS`) instead of a single hardcoded MCQ path. `evaluate()`'s
+  outer control flow (call, parse-with-retry, verdict, persist, status update) stayed
+  untouched — only the two MCQ-specific seams (prompt file, prompt body) needed to
+  become type-aware.
+
+- **`app/components/question_card.py::render_mcq_question` renamed to
+  `render_question`**, dispatching on `question.type` to a per-type payload renderer,
+  since the shared header/duplicate-warning/metadata-footer logic (unaffected by type)
+  would otherwise have to be duplicated across three MCQ/True-False/Fill-Blank render
+  functions. All four pages that rendered a question card were updated to the new
+  name; the SME review page's inline edit form got the same per-type dispatch
+  treatment (`services/review.py::submit_review` was already fully type-agnostic per
+  Slice 5's note — only the Streamlit form itself was MCQ-only).
+
+- **`services/experiment.py` (Slice 9) intentionally left MCQ-only**: it hardcodes
+  `generate_mcq` for experiment runs. Extending experimentation to the new types is
+  additive future work, out of scope for this slice.

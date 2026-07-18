@@ -53,6 +53,7 @@ class TrueFalsePayload(BaseModel):
 class FillBlankPayload(BaseModel):
     accepted_answers: list[str]
     blank_marker: str
+    explanation: str
     case_sensitive: bool = False
 
 

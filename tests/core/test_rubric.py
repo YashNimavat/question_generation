@@ -46,6 +46,36 @@ def test_get_rubric_returns_mcq_rubric():
     }
 
 
-def test_get_rubric_unknown_raises():
+def test_get_rubric_returns_true_false_rubric():
+    rubric = get_rubric(QuestionType.TRUE_FALSE)
+    assert rubric.id == "rubric_true_false"
+    assert rubric.version == "v1"
+    assert rubric.dimension_keys == {
+        "correctness",
+        "clarity",
+        "difficulty_calibration",
+        "explanation_quality",
+    }
+
+
+def test_get_rubric_returns_fill_blank_rubric():
+    rubric = get_rubric(QuestionType.FILL_BLANK)
+    assert rubric.id == "rubric_fill_blank"
+    assert rubric.version == "v1"
+    assert rubric.dimension_keys == {
+        "correctness",
+        "clarity",
+        "difficulty_calibration",
+        "explanation_quality",
+        "answer_key_completeness",
+    }
+
+
+def test_get_rubric_unknown_rubric_id_raises():
     with pytest.raises(ValueError):
-        get_rubric(QuestionType.TRUE_FALSE)
+        get_rubric(QuestionType.MCQ, rubric_id="nonexistent_rubric")
+
+
+def test_get_rubric_unknown_version_raises():
+    with pytest.raises(ValueError):
+        get_rubric(QuestionType.MCQ, rubric_version="v99")

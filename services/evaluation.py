@@ -2,12 +2,20 @@ import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 from pydantic import ValidationError
 
 from config.settings import settings
-from core.enums import OperationType, OverallVerdict, QuestionStatus
-from core.models import DimensionScore, Evaluation, Question
+from core.enums import OperationType, OverallVerdict, QuestionStatus, QuestionType
+from core.models import (
+    DimensionScore,
+    Evaluation,
+    FillBlankQuestion,
+    McqQuestion,
+    Question,
+    TrueFalseQuestion,
+)
 from core.rubric import Rubric, compute_overall_verdict, get_rubric
 from db.connection import DEFAULT_DB_PATH
 from db.repositories import evaluations_repo, questions_repo
@@ -15,9 +23,16 @@ from llm.base import LLMProvider, Message
 from llm.registry import get_llm_provider
 from metadata.logger import log_call
 
-PROMPT_VERSION = "judge_mcq_v1"
-PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "judge_mcq_v1.txt"
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 MAX_ATTEMPTS = 2
+
+# Judge (system) prompt per question type, keyed by prompt_version -- mirrors
+# services/generation.py's per-type prompt registration.
+JUDGE_PROMPTS: dict[QuestionType, tuple[str, Path]] = {
+    QuestionType.MCQ: ("judge_mcq_v1", PROMPTS_DIR / "judge_mcq_v1.txt"),
+    QuestionType.TRUE_FALSE: ("judge_true_false_v1", PROMPTS_DIR / "judge_true_false_v1.txt"),
+    QuestionType.FILL_BLANK: ("judge_fill_blank_v1", PROMPTS_DIR / "judge_fill_blank_v1.txt"),
+}
 
 
 class EvaluationError(Exception):
@@ -39,11 +54,12 @@ def evaluate(
         )
 
     rubric = get_rubric(question.type)
+    prompt_version, prompt_path = JUDGE_PROMPTS[question.type]
     provider = provider or get_llm_provider()
     model = model or settings.default_judge_model
 
     messages = [
-        Message(role="system", content=PROMPT_PATH.read_text()),
+        Message(role="system", content=prompt_path.read_text()),
         Message(role="user", content=_build_judge_prompt(question, reference_answer)),
     ]
 
@@ -58,7 +74,7 @@ def evaluate(
             output_tokens=result.output_tokens,
             latency_ms=result.latency_ms,
             cost_usd=result.cost_usd,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=prompt_version,
             db_path=db_path,
         )
 
@@ -109,12 +125,46 @@ def evaluate(
     )
 
 
-def _build_judge_prompt(question: Question, reference_answer: str | None) -> str:
+def _build_mcq_judge_body(question: McqQuestion) -> str:
     options_text = "\n".join(
         f"  {opt.id}. {opt.text}"
         + (" [marked correct by generator]" if opt.id == question.payload.correct_option_id else "")
         for opt in question.payload.options
     )
+    return (
+        f"Stem: {question.stem}\n\n"
+        f"Options:\n{options_text}\n\n"
+        f"Generator's explanation: {question.payload.explanation}"
+    )
+
+
+def _build_true_false_judge_body(question: TrueFalseQuestion) -> str:
+    return (
+        f"Statement: {question.stem}\n\n"
+        f"Generator's label: {question.payload.correct_answer}\n\n"
+        f"Generator's explanation: {question.payload.explanation}"
+    )
+
+
+def _build_fill_blank_judge_body(question: FillBlankQuestion) -> str:
+    accepted = ", ".join(question.payload.accepted_answers)
+    return (
+        f"Stem (blank marked with '{question.payload.blank_marker}'): {question.stem}\n\n"
+        f"Generator's accepted answers: {accepted}\n\n"
+        f"Case sensitive: {question.payload.case_sensitive}\n\n"
+        f"Generator's explanation: {question.payload.explanation}"
+    )
+
+
+_JUDGE_BODY_BUILDERS: dict[QuestionType, Callable[[Question], str]] = {
+    QuestionType.MCQ: _build_mcq_judge_body,
+    QuestionType.TRUE_FALSE: _build_true_false_judge_body,
+    QuestionType.FILL_BLANK: _build_fill_blank_judge_body,
+}
+
+
+def _build_judge_prompt(question: Question, reference_answer: str | None) -> str:
+    body = _JUDGE_BODY_BUILDERS[question.type](question)
     reference_block = (
         f"Reference answer (SME-supplied, treat as ground truth): {reference_answer}"
         if reference_answer
@@ -123,9 +173,7 @@ def _build_judge_prompt(question: Question, reference_answer: str | None) -> str
     return (
         f"Topic: {question.topic}\n"
         f"Target difficulty: {question.difficulty}\n\n"
-        f"Stem: {question.stem}\n\n"
-        f"Options:\n{options_text}\n\n"
-        f"Generator's explanation: {question.payload.explanation}\n\n"
+        f"{body}\n\n"
         f"{reference_block}\n\n"
         "Score this question against the rubric now."
     )

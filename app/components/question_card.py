@@ -1,6 +1,7 @@
 import streamlit as st
 
-from core.models import McqQuestion
+from core.enums import QuestionType
+from core.models import FillBlankQuestion, McqQuestion, Question, TrueFalseQuestion
 from metadata.models import MetadataRecord
 
 
@@ -12,13 +13,12 @@ def format_metadata_line(record: MetadataRecord) -> str:
     )
 
 
-def render_mcq_question(
-    question: McqQuestion, metadata: MetadataRecord | None = None
-) -> None:
+def render_question(question: Question, metadata: MetadataRecord | None = None) -> None:
     st.subheader(question.stem)
     st.caption(
-        f"topic: {question.topic} · difficulty: {question.difficulty} · "
-        f"status: {question.status.value} · version: {question.version}"
+        f"type: {question.type.value} · topic: {question.topic} · "
+        f"difficulty: {question.difficulty} · status: {question.status.value} · "
+        f"version: {question.version}"
     )
 
     if question.duplicate_of_id is not None:
@@ -31,14 +31,7 @@ def render_mcq_question(
         else:
             st.warning(message)
 
-    for option in question.payload.options:
-        if option.id == question.payload.correct_option_id:
-            st.success(f"✓ {option.text}")
-        else:
-            st.write(f"◯ {option.text}")
-
-    with st.expander("Explanation"):
-        st.write(question.payload.explanation)
+    _RENDER_PAYLOAD[question.type](question)
 
     if metadata is not None:
         st.caption(format_metadata_line(metadata))
@@ -48,3 +41,40 @@ def render_mcq_question(
                 f"Grounded in document {metadata.rag_usage.get('document_id')} "
                 f"using {chunk_count} chunk(s)."
             )
+
+
+def _render_mcq_payload(question: McqQuestion) -> None:
+    for option in question.payload.options:
+        if option.id == question.payload.correct_option_id:
+            st.success(f"✓ {option.text}")
+        else:
+            st.write(f"◯ {option.text}")
+
+    with st.expander("Explanation"):
+        st.write(question.payload.explanation)
+
+
+def _render_true_false_payload(question: TrueFalseQuestion) -> None:
+    if question.payload.correct_answer:
+        st.success("✓ True")
+    else:
+        st.error("✗ False")
+
+    with st.expander("Explanation"):
+        st.write(question.payload.explanation)
+
+
+def _render_fill_blank_payload(question: FillBlankQuestion) -> None:
+    st.write(f"Blank marker: `{question.payload.blank_marker}`")
+    st.write("Accepted answers: " + ", ".join(question.payload.accepted_answers))
+    st.caption(f"Case sensitive: {question.payload.case_sensitive}")
+
+    with st.expander("Explanation"):
+        st.write(question.payload.explanation)
+
+
+_RENDER_PAYLOAD = {
+    QuestionType.MCQ: _render_mcq_payload,
+    QuestionType.TRUE_FALSE: _render_true_false_payload,
+    QuestionType.FILL_BLANK: _render_fill_blank_payload,
+}

@@ -26,6 +26,7 @@ from core.models import (
     TrueFalsePayload,
     TrueFalseQuestion,
 )
+from llm.base import LLMResult, Message
 from metadata.models import MetadataRecord
 
 
@@ -197,3 +198,47 @@ def make_metadata_record(**overrides: Any) -> MetadataRecord:
     }
     fields.update(overrides)
     return MetadataRecord(**fields)
+
+
+def make_llm_result(**overrides: Any) -> LLMResult:
+    fields: dict[str, Any] = {
+        "text": "{}",
+        "model": "llama-3.3-70b-versatile",
+        "provider": "groq",
+        "input_tokens": 100,
+        "output_tokens": 200,
+        "latency_ms": 500.0,
+        "cost_usd": 0.0005,
+    }
+    fields.update(overrides)
+    return LLMResult(**fields)
+
+
+class FakeLLMProvider:
+    """Test double for llm.base.LLMProvider. Returns queued results in order,
+    recording every call it received for assertions."""
+
+    def __init__(self, results: list[LLMResult]) -> None:
+        self._results = list(results)
+        self.calls: list[dict[str, Any]] = []
+
+    def generate(
+        self,
+        messages: list[Message],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        response_format: str = "text",
+    ) -> LLMResult:
+        self.calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "response_format": response_format,
+            }
+        )
+        if not self._results:
+            raise AssertionError("FakeLLMProvider.generate called more times than queued results")
+        return self._results.pop(0)

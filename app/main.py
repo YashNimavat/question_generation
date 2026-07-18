@@ -9,3 +9,4 @@ st.write(
 
 st.page_link("pages/1_generate.py", label="Generate a question", icon="✨")
 st.page_link("pages/2_questions.py", label="Browse stored questions", icon="📋")
+st.page_link("pages/3_evaluate.py", label="Evaluate a question", icon="🧪")

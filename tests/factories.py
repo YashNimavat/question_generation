@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -106,6 +107,22 @@ def make_fill_blank_question(**overrides: Any) -> FillBlankQuestion:
     }
     fields.update(overrides)
     return FillBlankQuestion(**fields)
+
+
+def make_judge_scores_json(rubric=None, **overrides: Any) -> str:
+    """Build valid judge-response JSON text covering every dimension in `rubric`
+    (defaults to the MCQ rubric), overridable per dimension key, e.g.
+    make_judge_scores_json(correctness={"score": 2, "rationale": "..."})."""
+    from core.rubric import MCQ_RUBRIC_V1
+
+    rubric = rubric or MCQ_RUBRIC_V1
+    data = {
+        dim.key: {"score": 4, "rationale": f"{dim.name} is solid."}
+        for dim in rubric.dimensions
+    }
+    for key, value in overrides.items():
+        data[key] = value
+    return json.dumps(data)
 
 
 def make_evaluation(question, **overrides: Any) -> Evaluation:

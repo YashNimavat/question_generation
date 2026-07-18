@@ -1,6 +1,5 @@
 import pytest
 
-from config import secrets as secrets_module
 from core.enums import QuestionStatus
 from db.connection import get_connection
 from db.repositories import questions_repo
@@ -106,11 +105,7 @@ def test_embed_stem_logs_metadata_and_returns_vector(db_path):
     assert rows[0]["operation_type"] == "embedding"
 
 
-def test_embed_stem_returns_none_when_no_embedding_provider_configured(db_path, tmp_path, monkeypatch):
-    secrets_path = tmp_path / "secrets.toml"
-    secrets_path.write_text('groq_api_key = "test-key"\n')
-    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
-
+def test_embed_stem_returns_none_when_no_embedding_provider_configured(db_path):
     vector = dedup.embed_stem("What is the capital of France?", db_path=db_path)
 
     assert vector is None
@@ -119,11 +114,7 @@ def test_embed_stem_returns_none_when_no_embedding_provider_configured(db_path, 
     assert count == 0
 
 
-def test_batch_near_duplicate_rate_returns_none_without_embedding_provider(db_path, tmp_path, monkeypatch):
-    secrets_path = tmp_path / "secrets.toml"
-    secrets_path.write_text('groq_api_key = "test-key"\n')
-    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
-
+def test_batch_near_duplicate_rate_returns_none_without_embedding_provider(db_path):
     rate = dedup.batch_near_duplicate_rate(["stem one", "stem two"], db_path=db_path)
 
     assert rate is None

@@ -1,24 +1,16 @@
 import json
 from pathlib import Path
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
-from config import secrets as secrets_module
 from db.connection import init_db
 from tests.factories import FakeLLMProvider, make_judge_scores_json, make_llm_result
 
 EXPERIMENTS_PAGE = Path(__file__).resolve().parents[2] / "app" / "pages" / "6_experiments.py"
 
-
-@pytest.fixture(autouse=True)
-def _no_cohere_key(tmp_path, monkeypatch):
-    # Without this, config/secrets.toml's real keys (if present locally) would let
-    # services.dedup make real, billed network calls during this test -- same
-    # guard tests/services/test_experiment.py uses.
-    secrets_path = tmp_path / "secrets.toml"
-    secrets_path.write_text('groq_api_key = "test-key"\n')
-    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
+# tests/conftest.py's autouse _no_real_secrets fixture leaves no cohere_api_key
+# configured, so services.dedup's embedding calls are skipped gracefully here
+# unless a test explicitly injects a FakeEmbeddingProvider.
 
 VALID_MCQ_JSON = json.dumps(
     {

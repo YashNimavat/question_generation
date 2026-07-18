@@ -175,24 +175,57 @@ question_intelligence/
   .gitignore
 ```
 
-### 2.2 Phase 2 addition — `api/` **[Phase 2, reference only]**
+### 2.2 Phase 2 addition — `api/` **[Slice 10, built]**
 
 ```
   api/
-    main.py                     # FastAPI app
+    main.py                     # FastAPI app, includes all routers
     routers/
-      questions.py               # thin wrappers around services.generation / db reads
-      evaluations.py             # wraps services.evaluation
-      reviews.py                 # wraps services.review
-      documents.py                # wraps services.ingestion
-      experiments.py               # wraps services.experiment
-    schemas.py                  # request/response models (can mirror core/ models)
-    deps.py                     # auth/rate-limit dependencies, once needed
+      questions.py               # POST /questions/generate, GET /questions, GET /questions/{id}
+      documents.py                # POST /documents, GET /documents/{id}
+      evaluations.py               # POST /evaluations, GET /evaluations/{question_id}
+      reviews.py                    # POST /reviews, GET /reviews/{question_id}
+      experiments.py                 # POST /experiments, GET /experiments/{id}
+    schemas.py                  # request bodies only -- responses reuse core/ models
+                                 # directly as response_model (Question, Evaluation,
+                                 # Review, Document, Experiment, VariantMetrics)
+    deps.py                     # get_db_path / get_llm_provider_dep /
+                                 # get_embedding_provider_dep / get_vector_store_dep --
+                                 # FastAPI dependencies, not auth (see below)
 ```
 
 `api/` contains **no business logic** — every router handler is a direct call into an
-existing `services/` function. This is the payoff of the layering in Section 1.1: adding
-this folder is the entire Phase 2 API migration.
+existing `services/` function; nothing in `services/`, `db/`, or `core/` changed to add
+this layer. Route handlers are plain `def`, not `async def` — every service/repo/provider
+call underneath is synchronous, and FastAPI runs sync handlers in a threadpool
+automatically, so there is no async plumbing to add.
+
+**Credentials/auth**: matches the BYO-key model's actual current state (no session-based
+per-visitor key exists in the Streamlit UI either, despite Section 11's cross-cutting
+note describing it as a goal) — routes pass `provider=None`/`embedding_provider=None`
+through by default, and `llm/registry.py`/`embeddings/registry.py` pull the single
+server-side key from `config/secrets.toml` exactly as they do for Streamlit today. There
+is no auth middleware; per `docs/TECH_DECISIONS.md`, that is deferred until there's an
+actual external consumer to protect against.
+
+**Testability seam**: `api/deps.py`'s four functions exist so tests can swap in the
+existing `FakeLLMProvider`/`FakeEmbeddingProvider`/`FakeVectorStore` test doubles
+(`tests/factories.py`) via `app.dependency_overrides`, without touching real providers —
+mirroring how `services/` functions already accept an injected provider instead of
+constructing one themselves. `tests/api/conftest.py` also monkeypatches
+`config.secrets.SECRETS_PATH` per test (same pattern as
+`tests/services/test_generation.py`): several `services/dedup.py` helpers treat an
+explicit `embedding_provider=None` as "go fetch the real one," not "none available" — so
+without this isolation, a real `config/secrets.toml` on the dev machine would make tests
+silently call the real Cohere API and write real-dimension vectors into the shared local
+`chroma_data/` directory.
+
+Error handling is per-route, not global exception handlers: a route that references an
+existing entity (`question_id`, `document_id`, `experiment_id`) looks it up via the
+repository first and raises `404` if missing, then calls the service inside
+`try/except <ServiceError>: raise HTTPException(422, ...)` for validation-type failures
+(bad `decision`/`reason_category`, invalid variant config, unsupported file extension,
+malformed LLM output after retries, etc.).
 
 ---
 
@@ -394,12 +427,11 @@ aggregation in Section 7 (experimentation) and any future monitoring.
 
 ---
 
-## 5. API Design **[Phase 2 — reference only, not built in Phase 1]**
+## 5. API Design **[Slice 10, built]**
 
-Phase 1 has no HTTP layer; Streamlit calls `services/` in-process. The table below is the
-target contract for when Phase 2 adds `api/` — each route is a direct passthrough to the
-already-existing service function, so this is documentation of a wrapper, not new design
-work, when the time comes.
+Streamlit still calls `services/` in-process (unchanged); `api/` (Section 2.2) is a
+second, parallel caller over the same functions. Each route below is a direct passthrough
+to the already-existing service function — no new business logic.
 
 | Method + Path | Wraps | Notes |
 |---|---|---|

@@ -13,7 +13,7 @@ Slice 8  Deduplication via embeddings                               [optional]
 
 ## Phase 2 — Depth
 Slice 9   Experimentation (compare model / prompt / RAG-vs-not)
-Slice 10  FastAPI over the same services (for external clients)
+Slice 10  FastAPI over the same services (for external clients)          [done]
 Slice 11  New question types (True/False, Fill-in-Blank, then Essay/Matching/Ordering)
 
 ## Deferred always-until-needed

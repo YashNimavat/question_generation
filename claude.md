@@ -33,4 +33,5 @@ using LLMs, with SME (human) review in the loop.
 ## Commands
 - Install: `uv sync`
 - Run app: `uv run streamlit run app/main.py`
+- Run API: `uv run uvicorn api.main:app --reload`
 - Test: `uv run pytest`

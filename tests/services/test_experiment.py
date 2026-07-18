@@ -2,7 +2,6 @@ import json
 
 import pytest
 
-from config import secrets as secrets_module
 from core.enums import ExperimentStatus, OverallVerdict
 from core.models import DimensionScore, ExperimentRun
 from db.repositories import evaluations_repo, experiments_repo, metadata_repo, questions_repo
@@ -34,14 +33,11 @@ VALID_MCQ_JSON = json.dumps(
 PASSING_JUDGE_JSON = make_judge_scores_json()
 
 
-@pytest.fixture(autouse=True)
-def _no_cohere_key(tmp_path, monkeypatch):
-    # Every test in this module skips dedup/diversity embedding calls unless it
-    # explicitly injects a FakeEmbeddingProvider -- keeps happy-path tests focused on
-    # generation/evaluation flow without needing to queue embedding results too.
-    secrets_path = tmp_path / "secrets.toml"
-    secrets_path.write_text('groq_api_key = "test-key"\n')
-    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
+# Every test in this module skips dedup/diversity embedding calls unless it
+# explicitly injects a FakeEmbeddingProvider (tests/conftest.py's autouse
+# _no_real_secrets fixture leaves no cohere_api_key configured) -- keeps
+# happy-path tests focused on generation/evaluation flow without needing to
+# queue embedding results too.
 
 
 def _seed_experiment(db_path, **overrides):

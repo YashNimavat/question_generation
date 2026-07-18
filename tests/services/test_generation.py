@@ -2,7 +2,6 @@ import json
 
 import pytest
 
-from config import secrets as secrets_module
 from core.enums import QuestionStatus, Source
 from db.connection import get_connection
 from db.repositories import documents_repo, metadata_repo, questions_repo
@@ -237,11 +236,7 @@ def test_generate_mcq_grounded_passes_top_k_through_to_retrieval(db_path):
     assert vector_store.queried[0]["top_k"] == 1
 
 
-def test_generate_mcq_grounded_wraps_missing_embedding_key_as_generation_error(db_path, tmp_path, monkeypatch):
-    secrets_path = tmp_path / "secrets.toml"
-    secrets_path.write_text('groq_api_key = "test-key"\n')
-    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
-
+def test_generate_mcq_grounded_wraps_missing_embedding_key_as_generation_error(db_path):
     provider = FakeLLMProvider([])
 
     with pytest.raises(GenerationError, match="Embedding provider unavailable"):
@@ -319,13 +314,7 @@ def test_generate_mcq_persists_flagged_when_soft_duplicate_detected(db_path):
     assert len(dedup_store.added) == 2
 
 
-def test_generate_mcq_skips_dedup_gracefully_when_no_embedding_provider_configured(
-    db_path, tmp_path, monkeypatch
-):
-    secrets_path = tmp_path / "secrets.toml"
-    secrets_path.write_text('groq_api_key = "test-key"\n')
-    monkeypatch.setattr(secrets_module, "SECRETS_PATH", secrets_path)
-
+def test_generate_mcq_skips_dedup_gracefully_when_no_embedding_provider_configured(db_path):
     provider = FakeLLMProvider([make_llm_result(text=VALID_MCQ_JSON)])
 
     question = generate_mcq(topic="geography", difficulty="easy", provider=provider, db_path=db_path)

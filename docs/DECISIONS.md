@@ -186,3 +186,66 @@ alternative, and the reason. This is the highest-signal doc for interviewers.
   the algorithm simple and always terminating (no risk of an oversized chunk or an
   infinite carry-over loop) at the cost of not hitting the ~15% overlap target exactly
   at every boundary — acceptable given chunking is already a word-count approximation.
+
+## Slice 7
+
+- **`EmbeddingProvider.embed()` gains `input_type: str = "search_document"`**: resolves
+  the open question left by Slice 6. The default preserves every existing call site
+  (ingestion never passes it), and `rag/retrieval.py` is the one new caller that passes
+  `input_type="search_query"` explicitly. An `embed_query()` sibling method was
+  considered but rejected — one method with an explicit parameter is a smaller Protocol
+  surface than two methods that would otherwise share their entire batching/pricing
+  implementation.
+
+- **Retrieval scope is document-picker-only, no topic-wide cross-document search**:
+  `rag/retrieval.py::get_relevant_chunks` requires a `document_id` and filters
+  `VectorStore.query()` by it. `docs/TECH_ARCHITECTURE.md` SS6.4 leaves room for
+  topic-only retrieval across all documents, but that needs ranking/aggregation logic
+  this slice doesn't need — the UI already has a per-document picker from Slice 6, so
+  requiring a selection keeps `get_relevant_chunks` a thin, fully-tested wrapper around
+  the existing `VectorStore.query(filter=...)` primitive. Topic-wide retrieval is
+  deferred until a concrete need for it shows up.
+
+- **New `prompts/mcq_grounded_v1.txt` instead of branching `mcq_v1.txt`**: keeps the
+  topic-only generation path (prompt text, `PROMPT_VERSION`, and its tests) completely
+  untouched by this slice. `services/generation.py::generate_mcq` picks the prompt file
+  and version based on whether `document_id` is set, matching the "prompts are versioned
+  files, reference by version string" convention rather than growing one template two
+  behaviors.
+
+- **`rag_usage` stays an untyped `dict[str, Any]`**: `metadata/models.py::MetadataRecord
+  .rag_usage` was already this shape from Slice 2 groundwork and every other metadata
+  field on that model is similarly loose. `generate_mcq` builds
+  `{"document_id": ..., "chunk_ids": [...]}` inline at the call site per
+  `docs/TECH_ARCHITECTURE.md` SS4.6 rather than introducing a `RagUsage` Pydantic model
+  the docs don't call for.
+
+- **Zero retrieved chunks raises `GenerationError`, no silent fallback to topic-only
+  generation**: if `document_id` is set but `get_relevant_chunks` returns nothing (e.g.
+  the document has no chunks close to the topic), `generate_mcq` fails loudly instead of
+  quietly generating an ungrounded question under a `source=Source.DOCUMENT` label — that
+  would defeat the traceability `rag_usage` exists for.
+
+- **Groundedness rubric dimension deferred**: `docs/SYSTEM_DESIGN.md` SS4.1 calls out a
+  document-generation-specific "Groundedness" rubric dimension as the natural consumer of
+  `rag_usage` on the evaluation side. `core/rubric.py` still only has `MCQ_RUBRIC_V1`'s
+  five non-RAG dimensions — out of scope for this slice, which is generation-only, and
+  left for whichever slice next touches `core/rubric.py` or the evaluation engine.
+
+- **(Review pass) `rag/retrieval.py::get_relevant_chunks` now logs its query-side embed
+  call via `log_call(operation_type=OperationType.EMBEDDING, ...)`**: the first draft
+  called `embedding_provider.embed()` without logging it, unlike the identical
+  document-side call in `services/ingestion.py`, silently violating CLAUDE.md's "every
+  LLM/embedding operation logs metadata... no silent calls" rule — every grounded
+  generation attempt (including ones that go on to fail with zero retrieved chunks) was
+  a real, billed Cohere call with no `metadata_logs` row. Fixed by threading `db_path`
+  through `get_relevant_chunks` and logging immediately after the embed call, same as
+  ingestion does.
+
+- **(Review pass) `generate_mcq` wraps `get_relevant_chunks`'s `ValueError`
+  (no `cohere_api_key` configured) into `GenerationError`**: the first draft let this
+  propagate raw, so a user with a Groq key but no Cohere key would hit an unhandled
+  exception/traceback on the Generate page instead of a friendly `st.error` message —
+  the RAG toggle intentionally makes Cohere optional until it's actually used. Fixed the
+  same way `services/ingestion.py` already wraps this exact `ValueError` into
+  `IngestionError`, so both RAG entry points fail the same way.

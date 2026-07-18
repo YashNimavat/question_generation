@@ -13,4 +13,6 @@ class EmbeddingResult(BaseModel):
 
 
 class EmbeddingProvider(Protocol):
-    def embed(self, texts: list[str], model: str) -> EmbeddingResult: ...
+    def embed(
+        self, texts: list[str], model: str, input_type: str = "search_document"
+    ) -> EmbeddingResult: ...

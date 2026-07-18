@@ -32,3 +32,9 @@ def render_mcq_question(
 
     if metadata is not None:
         st.caption(format_metadata_line(metadata))
+        if metadata.rag_usage is not None:
+            chunk_count = len(metadata.rag_usage.get("chunk_ids", []))
+            st.caption(
+                f"Grounded in document {metadata.rag_usage.get('document_id')} "
+                f"using {chunk_count} chunk(s)."
+            )

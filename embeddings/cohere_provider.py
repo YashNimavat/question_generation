@@ -20,7 +20,9 @@ class CohereProvider:
     def __init__(self, api_key: str | None = None, client: cohere.Client | None = None) -> None:
         self._client = client if client is not None else cohere.Client(api_key=api_key)
 
-    def embed(self, texts: list[str], model: str) -> EmbeddingResult:
+    def embed(
+        self, texts: list[str], model: str, input_type: str = "search_document"
+    ) -> EmbeddingResult:
         if model not in PRICING_PER_MILLION_TOKENS:
             raise ValueError(
                 f"No pricing configured for Cohere model '{model}' -- add it to "
@@ -35,7 +37,7 @@ class CohereProvider:
             response = self._client.embed(
                 texts=batch,
                 model=model,
-                input_type="search_document",
+                input_type=input_type,
             )
             vectors.extend(response.embeddings)
             billed_units = getattr(response.meta, "billed_units", None) if response.meta else None

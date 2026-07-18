@@ -45,6 +45,16 @@ def test_embed_returns_result_with_computed_cost():
     assert client.received_kwargs[0]["input_type"] == "search_document"
 
 
+def test_embed_passes_explicit_input_type_for_query_side_embedding():
+    response = _FakeEmbedResponse(embeddings=[[0.1, 0.2]], input_tokens=100)
+    client = _FakeCohereClient([response])
+    provider = CohereProvider(client=client)
+
+    provider.embed(texts=["what is alpha"], model="embed-english-v3.0", input_type="search_query")
+
+    assert client.received_kwargs[0]["input_type"] == "search_query"
+
+
 def test_embed_batches_requests_over_the_96_text_limit():
     texts = [f"text {i}" for i in range(150)]
     response_1 = _FakeEmbedResponse(embeddings=[[0.0]] * 96, input_tokens=96)

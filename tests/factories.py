@@ -253,19 +253,23 @@ class FakeEmbeddingProvider:
         self._results = list(results)
         self.calls: list[dict[str, Any]] = []
 
-    def embed(self, texts: list[str], model: str) -> EmbeddingResult:
-        self.calls.append({"texts": texts, "model": model})
+    def embed(
+        self, texts: list[str], model: str, input_type: str = "search_document"
+    ) -> EmbeddingResult:
+        self.calls.append({"texts": texts, "model": model, "input_type": input_type})
         if not self._results:
             raise AssertionError("FakeEmbeddingProvider.embed called more times than queued results")
         return self._results.pop(0)
 
 
 class FakeVectorStore:
-    """Test double for rag.vector_store.VectorStore. Records add() calls and serves
-    query() from whatever has been added, ignoring `filter`."""
+    """Test double for rag.vector_store.VectorStore. Records add() and query() calls
+    and serves query() from whatever has been added, applying `filter` as an exact-match
+    on metadata keys (unlike chromadb, no similarity ranking -- add() order is preserved)."""
 
     def __init__(self) -> None:
         self.added: list[dict[str, Any]] = []
+        self.queried: list[dict[str, Any]] = []
 
     def add(self, ids: list[str], vectors: list[list[float]], metadata: list[dict[str, Any]]) -> None:
         self.added.append({"ids": ids, "vectors": vectors, "metadata": metadata})
@@ -273,9 +277,13 @@ class FakeVectorStore:
     def query(self, vector: list[float], top_k: int, filter: dict[str, Any] | None = None):
         from rag.vector_store import VectorMatch
 
+        self.queried.append({"vector": vector, "top_k": top_k, "filter": filter})
+
         matches = []
         for batch in self.added:
             for id_, meta in zip(batch["ids"], batch["metadata"]):
+                if filter and any(meta.get(key) != value for key, value in filter.items()):
+                    continue
                 matches.append(VectorMatch(id=id_, score=0.0, metadata=meta))
         return matches[:top_k]
 
